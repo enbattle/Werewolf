@@ -8,12 +8,13 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-#define BUFFER_SIZE 2048
-#define ADDRBUFFER 1024
+#define INTRODUCTION 4096
+#define BUFFER_SIZE 1024
+#define ADDRBUFFER 512
 #define MAX_NAME_LENGTH 20
-#define MAX_CLIENTS 8
+#define MAX_CLIENTS 9
 
-// User strict object
+// User struct object
 //  - userID: in-game-name
 //  - fd: file descriptor for client
 struct users {
@@ -109,6 +110,7 @@ int check_command(char* command, char* buffer, int command_length) {
 	return 1;
 }
 
+// Multithread to take care of player connections
 void* playerConnection(void* newConnection) {
 	int listenfd = *((int*) newConnection);
 	free(newConnection);
@@ -117,7 +119,7 @@ void* playerConnection(void* newConnection) {
 	int login = 0;
 
 	// Actual userid that will be remembered
-	char* actual_userid = calloc(MAX_NAME_LENGTH, sizeof(char));
+	char* savedUserID = calloc(MAX_NAME_LENGTH, sizeof(char));
 
 	// Check for activity on each of the established connections
 	while(1) {
@@ -144,7 +146,7 @@ void* playerConnection(void* newConnection) {
 				
 				// Remove the client from users list
 				for(i=0; i<currentUsersNum; i++) {
-					if(strcmp(actual_userid, usersListStruct[i].userID) == 0) {
+					if(strcmp(savedUserID, usersListStruct[i].userID) == 0) {
 						for(j=i; j<currentUsersNum; j++) {
 							strcpy(usersListStruct[j].userID, usersListStruct[j+1].userID);
 							usersListStruct[j].fd = usersListStruct[j+1].fd;
@@ -155,7 +157,7 @@ void* playerConnection(void* newConnection) {
 				}
 
 				// Freeing memory
-				free(actual_userid);
+				free(savedUserID);
 				free(userid);
 				free(buffer);
 
@@ -197,15 +199,15 @@ void* playerConnection(void* newConnection) {
 						index = 0;
 
 						// Remember the userid
-						strcpy(actual_userid, userid);
+						strcpy(savedUserID, userid);
 
 						// Print out request
-						printf("CHILD <%ld>: Received LOGIN request for userid %s\n", pthread_self(), actual_userid);
+						printf("CHILD <%ld>: Received LOGIN request for userid %s\n", pthread_self(), savedUserID);
 						
-						if(strlen(actual_userid) >= 4 && strlen(actual_userid) <= 16) {
+						if(strlen(savedUserID) >= 4 && strlen(savedUserID) <= 16) {
 							// Check if the user already exists
 							for(i=0; i<currentUsersNum; i++) {
-								if(strcmp(usersListStruct[i].userID, actual_userid) == 0) {
+								if(strcmp(usersListStruct[i].userID, savedUserID) == 0) {
 									user_found = 1;
 									break;
 								}
@@ -214,7 +216,7 @@ void* playerConnection(void* newConnection) {
 							// If the user already exists, send message that they are already
 							// connected; otherwise, send message "OK"
 							if(user_found == 0) {
-								strcpy(usersListStruct[currentUsersNum].userID, actual_userid);
+								strcpy(usersListStruct[currentUsersNum].userID, savedUserID);
 								usersListStruct[currentUsersNum].fd = listenfd;
 								currentUsersNum += 1;
 
@@ -313,8 +315,8 @@ int main(int argc, char* argv[]) {
 		return EXIT_FAILURE;
 	}
 
-	// Listen for the indicated number of clients
-	listen(sock_TCP, 8);
+	// Listen for the indicated number of players
+	listen(sock_TCP, 9);
 
 	printf("MAIN: Started Werewolf hosting server!\n");
 	printf("MAIN: Listening for player connections on port: %d\n", port);
@@ -352,6 +354,35 @@ int main(int argc, char* argv[]) {
 			pthread_t tid;
 			int* new_fd = calloc(1, sizeof(int));
 			*new_fd = connection;
+
+			// Send a message greeting the player
+			char* greeting = calloc(INTRODUCTION, sizeof(char));
+			strcpy(greeting, 
+				"Hello, welcome to Werewolf!\n\n"
+				"I, Wolfy, will be your moderator for this game!\n\n"
+				"Here is how to play the game:\n"
+				"\t Roles:\n"
+				"\t\t Regular Villager: No special skills\n"
+				"\t\t Seer (Villager): Can ask about a specific player's status (are they the werewolf?)\n"
+				"\t\t Doctor (Villager): Can heal someone about to be killed by a werewolf\n"
+				"\t\t Werewolf: Survive until the end\n\n"
+				"\t Game:\n"
+				"\t\t The game is divided into 'Night' and 'Day'. During the 'Night', the regular villagers a\n"
+				"\t\t asleep. The werewolves will be asked to wake up and will have to choose one villager to kill.\n"
+				"\t\t The seer will be asked to wake up and be able to ask about about the status of a specific\n"
+				"\t\t player, and the moderator will tell them who that player is (whether they are a werewolf or\n"
+				"\t\t a villager). The doctor will wake up and they will have to choose be able to choose someone\n"
+				"\t\t to save (hopefully that they save the player that the werewolves are trying to kill).\n"
+				"\t\t If the doctor successfully saves a villager, the moderator will say 'Someone has been saved'.\n"
+				"\t\t In the 'Day', everyone decides on a player to kill. Once a player is killed, or if the players\n"
+				"\t\t fail to choose a player to kill, the game goes into 'Night', and the cycle continues.\n\n"
+				"\t Note:\n"
+				"\t\t If a player is killed, they don't reveal their role, and even if the seer and doctor are\n"
+				"\t\t both dead, the moderator will continue to ask for them to wake up.");
+
+			send(*new_fd, greeting, strlen(greeting), 0);
+			free(greeting);
+
 			pthread_create(&tid, NULL, playerConnection, new_fd);
 		}
 
