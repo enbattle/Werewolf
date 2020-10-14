@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include "helpers.h"
 
 #define INTRODUCTION 4096
 #define BUFFER_SIZE 1024
@@ -14,101 +15,10 @@
 #define MAX_NAME_LENGTH 20
 #define MAX_CLIENTS 9
 
-// User struct object
-//  - userID: in-game-name
-//  - fd: file descriptor for client
-struct users {
-	char userID[MAX_NAME_LENGTH];
-	int fd;
-};
-
 // Array of current players
 struct users* usersListStruct;
 int currentUsersNum = 0;
 fd_set readfds;
-
-// Swapping-the-position function for the quicksort of the user list
-void sortAllUsersSwap(struct users* user1, struct users* user2)
-{
-	char* tempUser1 = calloc(MAX_NAME_LENGTH, sizeof(char));
-	char* tempUser2 = calloc(MAX_NAME_LENGTH, sizeof(char));
-	int tempFD1;
-	int tempFD2;
-
-	// Swap the userIDs
-	strcpy(tempUser1, user1->userID);
-	strcpy(tempUser2, user2->userID);
-	strcpy(user1->userID, tempUser2);
-	strcpy(user2->userID, tempUser1);
-
-	// Swap the file descriptors
-	tempFD1 = user1->fd;
-	tempFD2 = user2->fd;
-	user1->fd = tempFD2;
-	user2->fd = tempFD1;
-
-	free(tempUser1);
-	free(tempUser2);
-}
-
-// Find the bound for the pivot and restructure the array 
-int sortPartition(int start, int end)
-{
-	char* pivotUserID = calloc(MAX_NAME_LENGTH, sizeof(char));
-
-	// Choose pivot to be the last element of the subarray
-	strcpy(pivotUserID, usersListStruct[end].userID);
-
-	int current = start;
-
-	int i;
-	for(i=current; i<end; i++)
-	{
-		// If element less than pivot, swap it to the front of the array
-		if(strcmp(pivotUserID, usersListStruct[i].userID) > 0){
-			sortAllUsersSwap(&usersListStruct[current], &usersListStruct[i]);
-			current +=1;
-		}
-	}
-
-	// Swap the pivot with the current index after the last lesser element has been swapped
-	sortAllUsersSwap(&usersListStruct[current], &usersListStruct[end]);
-
-	free(pivotUserID);
-
-	return current;
-}
-
-// Sort the users alphabetically using quicksort
-void sortAllUsers(int start, int end) 
-{
-	if(start < end)
-	{
-		// Find the bound that divides the subarray into lower (less than pivot) 
-		// 	and upper (greater than pivot) 
-		int bound = sortPartition(start, end);
-
-		// Recursing through the lower subarray
-		sortAllUsers(start, bound-1);
-
-		// Recursing through the upper subarray
-		sortAllUsers(bound+1, end);  
-	}
-}
-
-// Checks what command was requested in the buffer
-int check_command(char* command, char* buffer, int command_length) {
-	int i;
-	for(i=0; i<command_length; i++) {
-		if(command[i] == buffer[i]) {
-			continue;
-		}
-		else {
-			return 0;
-		}
-	}
-	return 1;
-}
 
 // Multithread to take care of player connections
 void* playerConnection(void* newConnection) {
@@ -223,7 +133,7 @@ void* playerConnection(void* newConnection) {
 								// Sort the array user structs
 								int start = 0;
 								int end = currentUsersNum-1;
-								sortAllUsers(start, end);
+								sortAllUsers(usersListStruct, start, end);
 
 								// Send acknowledgement message that user is already connected
 								send(listenfd, "OK!\n", 4, 0);
@@ -253,6 +163,23 @@ void* playerConnection(void* newConnection) {
 
 						send(listenfd, "ERROR Already connected\n", 24, 0);
 					}
+				}
+				else if(check_command("WHO", buffer, 3)) {
+					// Print out request
+					printf("CHILD <%ld>: Rcvd WHO request\n", pthread_self());
+
+					char* list_of_names = calloc(BUFFER_SIZE, sizeof(char));
+
+					strcpy(list_of_names, "OK!\n");
+
+					// Add all users to the list of names
+					for(i=0; i<currentUsersNum; i++) {
+						strcat(list_of_names, usersListStruct[i].userID);
+						strcat(list_of_names, "\n");
+					}
+
+					// Send acknowledgement message and list out all current users
+					send(listenfd, list_of_names, strlen(list_of_names), 0);
 				}
 				else {
 					// Print error message of invalid request
